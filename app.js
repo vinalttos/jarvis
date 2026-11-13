@@ -87,6 +87,8 @@ let recognition = null;
 let recognitionActive = false;
 let isThinking = false;
 let speechTimer = null;
+const maxSpeechDurationMs = 20_000;
+const maxSpokenWords = 35;
 
 function t(key, ...args) {
   const value = translations[currentLanguage][key] ?? translations.en[key] ?? key;
@@ -421,7 +423,7 @@ function speak(text) {
   utterance.onstart = () => {
     stage.classList.add("is-speaking");
     stageReadout.textContent = t("waitingForAI");
-    speechTimer = window.setTimeout(() => window.speechSynthesis.cancel(), 10_000);
+    speechTimer = window.setTimeout(() => window.speechSynthesis.cancel(), maxSpeechDurationMs);
   };
   utterance.onend = () => {
     window.clearTimeout(speechTimer);
@@ -431,13 +433,20 @@ function speak(text) {
   window.speechSynthesis.speak(utterance);
 }
 
-function respond(text, shouldSpeak = true) {
-  addMessage(preferences.assistantName, text);
-  setStatus(t("ready"));
-  if (shouldSpeak) speak(text);
+function limitSpokenText(text) {
+  const words = text.trim().split(/\s+/);
+  if (words.length <= maxSpokenWords) return text.trim();
+  return `${words.slice(0, maxSpokenWords).join(" ").replace(/[.!?…]+$/, "")}…`;
 }
 
-async function askAI(message) {
+function respond(text, shouldSpeak = false) {
+  const reply = limitSpokenText(text);
+  addMessage(preferences.assistantName, reply);
+  setStatus(t("ready"));
+  if (shouldSpeak) speak(reply);
+}
+
+async function askAI(message, shouldSpeak) {
   if (isThinking) return;
   isThinking = true;
   stage.classList.add("is-thinking");
@@ -455,12 +464,13 @@ async function askAI(message) {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || t("emptyResponse"));
-    aiHistory.push({ role: "user", content: message }, { role: "assistant", content: result.reply });
+    const reply = limitSpokenText(result.reply);
+    aiHistory.push({ role: "user", content: message }, { role: "assistant", content: reply });
     aiHistory = aiHistory.slice(-30);
     persistCurrentConversation();
-    respond(result.reply);
+    respond(reply, shouldSpeak);
   } catch (error) {
-    respond(error.message || t("cannotConnect"), false);
+    respond(error.message || t("cannotConnect"), shouldSpeak);
   } finally {
     isThinking = false;
     stage.classList.remove("is-thinking");
@@ -528,49 +538,49 @@ function isJarvisGreeting(text) {
   return mentionedJarvis && greeting;
 }
 
-function handleCommand(raw) {
+function handleCommand(raw, shouldSpeak = false) {
   const command = raw.trim();
   if (!command) return;
   const normalized = command.toLocaleLowerCase(locales[currentLanguage]);
   const userLabel = { pt: "VOCÊ", en: "YOU", es: "TÚ" }[currentLanguage];
   addMessage(userLabel, command);
   if (isJarvisGreeting(command)) {
-    respond(getTimeGreeting());
+    respond(getTimeGreeting(), shouldSpeak);
     return;
   }
   if (/\b(que horas|horas são|hora agora|what time is it|what's the time|current time|qué hora es|que hora es|hora actual)\b/.test(normalized)) {
-    respond(t("timeAnswer", new Intl.DateTimeFormat(locales[currentLanguage], { hour: "2-digit", minute: "2-digit" }).format(new Date())));
+    respond(t("timeAnswer", new Intl.DateTimeFormat(locales[currentLanguage], { hour: "2-digit", minute: "2-digit" }).format(new Date())), shouldSpeak);
     return;
   }
   if (/\b(data de hoje|que dia é hoje|qual é a data|today's date|what day is it|what is the date|fecha de hoy|qué día es hoy|que dia es hoy)\b/.test(normalized)) {
-    respond(t("dateAnswer", new Intl.DateTimeFormat(locales[currentLanguage], { dateStyle: "full" }).format(new Date())));
+    respond(t("dateAnswer", new Intl.DateTimeFormat(locales[currentLanguage], { dateStyle: "full" }).format(new Date())), shouldSpeak);
     return;
   }
   if (/\b(meus lembretes|quais são meus lembretes|listar lembretes|my reminders|list reminders|mis recordatorios|listar recordatorios)\b/.test(normalized)) {
     const active = reminders.filter((item) => !item.done);
-    respond(t("remindersAnswer", active.length, active.map((item) => item.text).join("; ")));
+    respond(t("remindersAnswer", active.length, active.map((item) => item.text).join("; ")), shouldSpeak);
     return;
   }
   if (/\b(lembre-me|me lembre|adicionar lembrete|anote|anotar|remind me|add reminder|note this|recuérdame|recuerdame|añadir recordatorio|agregar recordatorio|anota)\b/.test(normalized)) {
     const text = command.replace(/^.*?\b(?:lembre-me|me lembre|adicionar lembrete|anote|anotar|remind me|add reminder|note this|recuérdame|recuerdame|añadir recordatorio|agregar recordatorio|anota)\b\s*(?:de|para|que|to)?\s*/i, "");
     if (text && addReminder(text)) {
-      respond(t("noted", text.replace(/[.!?]+$/, "")));
+      respond(t("noted", text.replace(/[.!?]+$/, "")), shouldSpeak);
       persistCurrentConversation();
     } else {
-      respond(t("whatToNote"));
+      respond(t("whatToNote"), shouldSpeak);
     }
     return;
   }
   if (/\b(ajuda|o que você faz|comandos|help|what can you do|ayuda|qué puedes hacer|que puedes hacer)\b/.test(normalized)) {
-    respond(t("help"));
+    respond(t("help"), shouldSpeak);
     return;
   }
   const result = calculateExpression(command);
   if (result !== null) {
-    respond(t("result", result));
+    respond(t("result", result), shouldSpeak);
     return;
   }
-  void askAI(command);
+  void askAI(command, shouldSpeak);
 }
 
 function renderAccount() {
@@ -604,7 +614,7 @@ function initializeSpeechRecognition() {
     stageReadout.textContent = t("listening");
     setStatus(t("microphoneActive"));
   };
-  recognition.onresult = (event) => handleCommand(event.results[0][0].transcript);
+  recognition.onresult = (event) => handleCommand(event.results[0][0].transcript, true);
   recognition.onerror = () => respond(t("microphoneError"), false);
   recognition.onend = () => {
     recognitionActive = false;
@@ -789,6 +799,12 @@ chatForm.addEventListener("submit", (event) => {
   const text = chatInput.value.trim();
   if (!text) return;
   chatInput.value = "";
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+    window.clearTimeout(speechTimer);
+    stage.classList.remove("is-speaking");
+    stageReadout.textContent = t("waiting");
+  }
   handleCommand(text);
 });
 

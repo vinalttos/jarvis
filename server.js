@@ -9,7 +9,7 @@ import nodemailer from "nodemailer";
 import pg from "pg";
 
 const port = Number(process.env.PORT) || 3001;
-const geminiModel = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const geminiModel = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 const bodyLimit = 20_000;
 const sessionLifetime = 7 * 24 * 60 * 60;
@@ -75,7 +75,7 @@ if (database) {
   accounts = await loadAccounts();
 }
 
-const systemPrompt = "Você é um assistente pessoal original, prestativo e confiável. Use um tom sereno, formal, preciso e cortês, com frases naturais e bem articuladas; não imite personagens existentes, vozes ou bordões conhecidos. Responda à pergunta do usuário com clareza; não diga que não sabe sem antes tentar ajudar. Não invente fatos: se a resposta depender de informação atual ou você não tiver certeza, informe isso brevemente. Nunca ultrapasse 20 linhas. Respeite as políticas de segurança e não afirme que executa ações reais no mundo físico.";
+const systemPrompt = "Você é um assistente pessoal original, prestativo e confiável. Use um tom sereno, formal, preciso e cortês, com frases naturais e bem articuladas; não imite personagens existentes, vozes ou bordões conhecidos. Responda à pergunta do usuário com clareza em até cerca de 35 palavras, para caber em aproximadamente 20 segundos de fala. Nunca diga que pesquisou, buscou ou consultou a web; apresente a informação diretamente. Não diga que não sabe sem antes tentar ajudar. Não invente fatos: se a resposta depender de informação atual ou você não tiver certeza, informe isso brevemente. Respeite as políticas de segurança e não afirme que executa ações reais no mundo físico.";
 
 function languageForCountry(country) {
   if (portugueseCountries.has(country)) return "pt";
@@ -506,24 +506,24 @@ async function searchOnce(query, language) {
 function searchReply(search, language) {
   if (search.failed) {
     return localized(language, {
-      pt: "O Gemini está indisponível e não consegui acessar a busca na web. Tente novamente em instantes.",
-      en: "Gemini is unavailable and I couldn't access web search. Please try again shortly.",
-      es: "Gemini no está disponible y no pude acceder a la búsqueda web. Inténtalo de nuevo en unos instantes.",
+      pt: "Não consegui confirmar essa informação agora. Tente novamente mais tarde.",
+      en: "I couldn't confirm that information just now. Please try again later.",
+      es: "No pude confirmar esa información ahora. Inténtalo de nuevo más tarde.",
     });
   }
   if (!search.results.length) {
     return localized(language, {
-      pt: "Pesquisei na web, mas não encontrei resultados úteis para essa pergunta.",
-      en: "I searched the web but couldn't find useful results for that question.",
-      es: "Busqué en la web, pero no encontré resultados útiles para esa pregunta.",
+      pt: "Não encontrei informações confiáveis para responder a isso.",
+      en: "I couldn't find reliable information to answer that.",
+      es: "No encontré información confiable para responder a eso.",
     });
   }
   const heading = localized(language, {
-    pt: "Encontrei estas informações na web:",
-    en: "I found this information on the web:",
-    es: "Encontré esta información en la web:",
+    pt: "Estas são as informações mais relevantes:",
+    en: "Here is the most relevant information:",
+    es: "Esta es la información más relevante:",
   });
-  return [heading, ...search.results.map((item, index) => `${index + 1}. ${item.title}: ${item.snippet} (${item.url})`)].join("\n");
+  return [heading, ...search.results.slice(0, 3).map((item) => `${item.title}: ${item.snippet}`)].join("\n");
 }
 
 function shouldSearch(text) {
